@@ -19,7 +19,7 @@ class BattleshipApp(ctk.CTk):
         super().__init__()
         self.title("Torpedo Tango")
         self.geometry("1200x800")
-        self.configure(bg= "black")
+        self.configure(fg_color="#373737")
         self.iconbitmap(resource_path("icon.ico"))
         
         self.after(0, lambda: self.state('zoomed'))
@@ -41,7 +41,7 @@ class BattleshipApp(ctk.CTk):
         
         self.player_buttons = []
         self.computer_buttons = []
-        self.status_indicators = {"Player": {}, "Computer": {}}
+        self.status_indicators = {"Player": {}, "Enemy": {}}
 
         self.game_over = False
         self.setup_mode = True
@@ -55,6 +55,10 @@ class BattleshipApp(ctk.CTk):
         self.computer_health = {}
         self.computer_target_queue = []
         
+        # UI State
+        self.selected_target = None
+        self.hovered_cells = [] # For optimization
+        
         self.layout_mode = "horizontal"
 
         self.create_widgets()
@@ -62,16 +66,47 @@ class BattleshipApp(ctk.CTk):
         self.after(200, self.ask_name_and_start)
         
         self.bind("<Configure>", self.on_resize)
+        
+        # Keybinds for firing
+        self.bind("<Return>", lambda e: self.handle_action_click())
+        self.bind("<space>", lambda e: self.handle_action_click())
 
     def create_empty_board(self):
         return [["~" for _ in range(10)] for _ in range(10)]
 
     def ask_name_and_start(self):
-        dialog = ctk.CTkInputDialog(text="Enter your name, Commander:", title="Identity Verification")
-        name = dialog.get_input()
-        if name:
-            self.player_name = name
-        self.new_game()
+        # Custom Dialog for Identity
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Welcome to Torpedo Tango!")
+        dialog.geometry("400x220")
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        dialog.configure(fg_color="#1e293b")
+        
+        # Try to set icon
+        try: dialog.after(200, lambda: dialog.iconbitmap(resource_path("icon.ico")))
+        except: pass
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (400 // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (220 // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(dialog, text="Enter your name, Admiral:", font=("Roboto", 18, "bold"), text_color="white").pack(pady=(40, 15))
+        
+        entry = ctk.CTkEntry(dialog, width=250, font=("Roboto", 14), justify="center")
+        entry.pack(pady=10)
+        entry.focus_set()
+
+        def confirm(event=None):
+            if entry.get().strip(): self.player_name = entry.get().strip()
+            dialog.destroy()
+            self.new_game()
+
+        entry.bind("<Return>", confirm)
+        ctk.CTkButton(dialog, text="START MISSION", command=confirm, fg_color="#2ecc71", hover_color="#27ae60", font=("Roboto", 14, "bold")).pack(pady=15)
+        dialog.grab_set()
 
     def place_ships_random(self, board, health_dict):
         for name in self.ship_info:
@@ -118,8 +153,11 @@ class BattleshipApp(ctk.CTk):
         self.main_container = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.main_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        self.title_label = ctk.CTkLabel(self.main_container, text="Torpedo Tango", font=("Impact", 48), text_color="#3498DB")
-        self.title_label.pack(pady=(60, 20))
+        self.title_label = ctk.CTkLabel(self.main_container, text="Torpedo Tango", font=("Impact", 60), text_color="#3498DB")
+        self.title_label.pack(pady=(50, 5))
+        
+        self.tagline_label = ctk.CTkLabel(self.main_container, text="Guess. Strike. Sink the Fleet.", font=("Roboto", 18), text_color="#95a5a6")
+        self.tagline_label.pack(pady=(0, 20))
 
         self.boards_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
         self.boards_frame.pack(expand=True, fill="both")
@@ -131,53 +169,65 @@ class BattleshipApp(ctk.CTk):
 
         self.left_container = ctk.CTkFrame(self.boards_frame, fg_color="transparent")
 
-        self.player_frame = ctk.CTkFrame(self.left_container, fg_color="#1a1a1a")
-        self.player_frame.pack()
+        self.player_frame = ctk.CTkFrame(self.left_container, fg_color="#1a1a1a", border_width=4, border_color="#1A5276")
+        self.player_frame.pack(padx=20, pady=20)
         self.player_title = ctk.CTkLabel(self.player_frame, text="YOUR FLEET", font=("Roboto", 16, "bold"))
         self.player_title.grid(row=0, column=0, columnspan=11, pady=5)
         
-        self.player_status_frame = ctk.CTkFrame(self.left_container, fg_color="#222222")
-        self.player_status_frame.pack(fill="x", pady=10)
+        self.player_status_frame = ctk.CTkFrame(self.left_container, fg_color="#222222", border_width=2, border_color="#444444")
+        self.player_status_frame.pack(pady=10, padx=10)
 
         self.center_container = ctk.CTkFrame(self.boards_frame, fg_color="transparent")
         
+        self.turn_label = ctk.CTkLabel(self.center_container, text="", font=("Impact", 36), text_color="#2ecc71")
+        self.turn_label.pack(pady=(20, 0))
+        
         self.message_frame = ctk.CTkFrame(self.center_container, width=400, height=100, fg_color="transparent")
-        self.message_frame.pack(pady=(80, 10))
+        self.message_frame.pack(pady=(10, 10))
         self.message_frame.pack_propagate(False)
         
-        self.status_label = ctk.CTkLabel(self.message_frame, text="Initializing...", font=("Roboto Medium", 20), text_color="white", wraplength=380)
+        self.status_label = ctk.CTkLabel(self.message_frame, text="Initializing...", font=("Roboto Medium", 26), text_color="white", wraplength=380)
         self.status_label.pack(expand=True, fill="both")
 
-        self.setup_buttons_frame = ctk.CTkFrame(self.center_container, width=400, height=100, fg_color="transparent")
-        self.setup_buttons_frame.pack(pady=10)
-        self.setup_buttons_frame.pack_propagate(False)
-        self.setup_buttons_frame.grid_columnconfigure(0, weight=1)
-        self.setup_buttons_frame.grid_columnconfigure(1, weight=1)
-        
-        self.random_btn = ctk.CTkButton(self.setup_buttons_frame, text="Randomize", command=self.random_place_player_ships, width=140, fg_color="#d35400", hover_color="#e67e22")
-        self.rotate_btn = ctk.CTkButton(self.setup_buttons_frame, text="Rotate Ship: Horizontal", command=self.toggle_orientation, width=200)
-        self.ready_btn = ctk.CTkButton(self.setup_buttons_frame, text="DEPLOY FLEET", command=self.finish_setup, width=200, fg_color="#27ae60", hover_color="#2ecc71")
+        # Central Control Area
+        self.control_frame = ctk.CTkFrame(self.center_container, width=400, fg_color="transparent")
+        self.control_frame.pack(pady=10, fill="x")
+        self.control_frame.grid_columnconfigure(0, weight=1)
+        self.control_frame.grid_columnconfigure(1, weight=1)
 
+        # Main Action Button (Fire / Deploy)
+        self.action_btn = ctk.CTkButton(self.control_frame, text="DEPLOY FLEET", font=("Impact", 24), height=60, 
+                                      command=self.handle_action_click, fg_color="#117A65", hover_color="#148F77")
+        self.action_btn.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+
+        # Secondary Buttons
+        self.random_btn = ctk.CTkButton(self.control_frame, text="Randomize", font=("Roboto", 14, "bold"), command=self.random_place_player_ships, fg_color="#d35400", hover_color="#e67e22")
+        self.random_btn.grid(row=1, column=0, padx=5, sticky="ew")
+        
+        self.rotate_btn = ctk.CTkButton(self.control_frame, text="Rotate: Horizontal", font=("Roboto", 14, "bold"), command=self.toggle_orientation)
+        self.rotate_btn.grid(row=1, column=1, padx=5, sticky="ew")
+
+        # Right Side (Computer)
         self.right_container = ctk.CTkFrame(self.boards_frame, fg_color="transparent")
 
-        self.computer_frame = ctk.CTkFrame(self.right_container, fg_color="#1a1a1a")
-        self.computer_frame.pack()
+        self.computer_frame = ctk.CTkFrame(self.right_container, fg_color="#1a1a1a", border_width=4, border_color="#1A5276")
+        self.computer_frame.pack(padx=20, pady=20)
         ctk.CTkLabel(self.computer_frame, text="ENEMY WATERS", font=("Roboto", 16, "bold")).grid(row=0, column=0, columnspan=11, pady=5)
 
-        self.computer_status_frame = ctk.CTkFrame(self.right_container, fg_color="#222222")
-        self.computer_status_frame.pack(fill="x", pady=10)
+        self.computer_status_frame = ctk.CTkFrame(self.right_container, fg_color="#222222", border_width=2, border_color="#444444")
+        self.computer_status_frame.pack(pady=10, padx=10)
 
         self.create_board_grid(self.player_frame, self.player_buttons, is_player=True)
         self.create_board_grid(self.computer_frame, self.computer_buttons, is_player=False)
         
         self.create_status_panel(self.player_status_frame, "Player")
-        self.create_status_panel(self.computer_status_frame, "Computer")
+        self.create_status_panel(self.computer_status_frame, "Enemy")
 
-        self.new_game_button = ctk.CTkButton(self.center_container, text="NEW GAME", font=("Roboto", 14, "bold"), height=40, command=self.confirm_new_game, fg_color="#2ecc71", hover_color="#27ae60")
-        self.new_game_button.pack(pady=(30, 10))
+        self.new_game_button = ctk.CTkButton(self.center_container, text="NEW GAME", font=("Roboto", 12, "bold"), command=self.confirm_new_game, fg_color="#34495e", hover_color="#2c3e50")
+        self.new_game_button.pack(pady=(20, 5))
         
-        self.instructions_btn = ctk.CTkButton(self.center_container, text="INSTRUCTIONS", font=("Roboto", 12, "bold"), height=30, command=self.show_instructions, fg_color="#7f8c8d", hover_color="#95a5a6")
-        self.instructions_btn.pack(pady=10)
+        self.instructions_btn = ctk.CTkButton(self.center_container, text="INSTRUCTIONS", font=("Roboto", 12, "bold"), command=self.show_instructions, fg_color="#7f8c8d", hover_color="#95a5a6")
+        self.instructions_btn.pack(pady=5)
 
         self.update_layout()
 
@@ -217,30 +267,39 @@ class BattleshipApp(ctk.CTk):
             name_lbl = ctk.CTkLabel(grid_frame, text=ship_name, font=("Roboto", 12, "bold"), anchor="w")
             name_lbl.grid(row=i, column=0, sticky="w", padx=(0, 10), pady=2)
             
-            pips_frame = ctk.CTkFrame(grid_frame, fg_color="transparent")
-            pips_frame.grid(row=i, column=1, sticky="w")
+            # Progress Bar instead of pips
+            progress = ctk.CTkProgressBar(grid_frame, width=150, height=10)
+            progress.grid(row=i, column=1, sticky="w")
+            progress.set(1.0) # Full health initially
+            progress.configure(progress_color="#2ecc71") # Green
             
-            pips = []
-            for _ in range(info["length"]):
-                pip = ctk.CTkLabel(pips_frame, text="•", font=("Arial", 18), width=20, text_color="#555555") 
-                pip.pack(side="left", padx=1)
-                pips.append(pip)
-            
-            self.status_indicators[owner][ship_name] = pips
+            self.status_indicators[owner][ship_name] = {"bar": progress, "label": name_lbl}
 
     def update_status_ui(self):
-        for owner in ["Player", "Computer"]:
+        for owner in ["Player", "Enemy"]:
             health_dict = self.player_health if owner == "Player" else self.computer_health
             for ship, hits in health_dict.items():
-                pips = self.status_indicators[owner][ship]
+                widgets = self.status_indicators[owner][ship]
+                bar = widgets["bar"]
+                label = widgets["label"]
                 max_hits = self.ship_info[ship]["length"]
-                base_color = self.ship_info[ship]["color"] if owner == "Player" else "#555555"
+                health_pct = (max_hits - hits) / max_hits
                 
-                for i in range(max_hits):
-                    if i < hits:
-                        pips[i].configure(text="X", text_color="#e74c3c")
-                    else:
-                        pips[i].configure(text="•", text_color=base_color)
+                bar.set(health_pct)
+                
+                # Dynamic Color
+                if hits == max_hits:
+                    bar.configure(progress_color="#000000") # Black for sunk
+                    label.configure(text=f"{ship} (SUNK)", text_color="#e74c3c")
+                elif health_pct > 0.5:
+                    bar.configure(progress_color="#2ecc71") # Green
+                    label.configure(text=ship, text_color="#DCE4EE")
+                elif health_pct > 0.2:
+                    bar.configure(progress_color="#f39c12") # Orange
+                    label.configure(text=ship, text_color="#DCE4EE")
+                else:
+                    bar.configure(progress_color="#e74c3c") # Red
+                    label.configure(text=ship, text_color="#DCE4EE")
 
     def create_board_grid(self, frame, button_list, is_player):
         row_labels = [chr(ord('A') + i) for i in range(10)]
@@ -276,11 +335,17 @@ class BattleshipApp(ctk.CTk):
                 if is_player:
                     button.bind("<Enter>", lambda e, r=row, c=col: self.on_player_hover(r, c))
                     button.bind("<Leave>", lambda e, r=row, c=col: self.on_player_leave(r, c))
+                else:
+                    # Enemy board effects
+                    button.configure(cursor="crosshair")
+                    button.bind("<Enter>", lambda e, b=button: self.on_enemy_hover(b, True))
+                    button.bind("<Leave>", lambda e, b=button: self.on_enemy_hover(b, False))
+                    
             button_list.append(button_row)
 
     def toggle_orientation(self):
         self.placement_orientation = "vertical" if self.placement_orientation == "horizontal" else "horizontal"
-        self.rotate_btn.configure(text=f"Rotate Ship: {self.placement_orientation.title()}")
+        self.rotate_btn.configure(text=f"Rotate: {self.placement_orientation.title()}")
 
     def on_player_hover(self, row, col):
         if not self.setup_mode or not self.ships_to_place:
@@ -289,27 +354,42 @@ class BattleshipApp(ctk.CTk):
         ship_name = self.ships_to_place[0]
         length = self.ship_info[ship_name]["length"]
         
+        # Optimization: Don't redraw if same cell
+        if hasattr(self, 'last_hover_pos') and self.last_hover_pos == (row, col):
+            return
+        self.last_hover_pos = (row, col)
+        
+        # Clear previous hover
+        self.on_player_leave(0, 0) 
+        
         if self.is_valid_placement(self.player_board, row, col, self.placement_orientation, length):
             color = self.ship_info[ship_name]["color"]
         else:
             color = "#c0392b"
             
+        self.hovered_cells = []
         for i in range(length):
             r, c = (row, col + i) if self.placement_orientation == "horizontal" else (row + i, col)
             if 0 <= r < 10 and 0 <= c < 10:
                 self.player_buttons[r][c].configure(fg_color=color)
+                self.hovered_cells.append((r, c))
 
     def on_player_leave(self, row, col):
-        if not self.setup_mode:
-            return
-        for r in range(10):
-            for c in range(10):
-                if self.player_board[r][c] != "~":
-                    char = self.player_board[r][c]
-                    name = self.char_to_name[char]
-                    self.player_buttons[r][c].configure(fg_color=self.ship_info[name]["color"])
-                else:
-                    self.player_buttons[r][c].configure(fg_color="#333333")
+        # Optimized clear
+        if not self.setup_mode: return
+        
+        for r, c in self.hovered_cells:
+            if self.player_board[r][c] != "~":
+                char = self.player_board[r][c]
+                name = self.char_to_name[char]
+                self.player_buttons[r][c].configure(fg_color=self.ship_info[name]["color"])
+            else:
+                self.player_buttons[r][c].configure(fg_color="#333333")
+        self.hovered_cells = []
+
+    def on_enemy_hover(self, button, entering):
+        if button.cget("state") != "disabled" and button.cget("fg_color") not in ["#c0392b", "#7f8c8d"]: # Not hit/miss
+            button.configure(fg_color="#0ea5e9" if entering else "#333333")
 
     def handle_grid_click(self, row, col, is_player_board):
         if self.setup_mode and is_player_board:
@@ -320,7 +400,19 @@ class BattleshipApp(ctk.CTk):
 
             self.place_manual_ship(row, col)
         elif not self.setup_mode and not is_player_board:
-            self.handle_player_shot(row, col)
+            # Select target logic
+            if self.game_over or self.turn != "Your turn": return
+            if self.computer_board[row][col] in ["H", "M"]: return
+            
+            # Clear previous selection visual
+            if self.selected_target:
+                pr, pc = self.selected_target
+                if self.computer_board[pr][pc] not in ["H", "M"]:
+                    self.computer_buttons[pr][pc].configure(fg_color="#333333", border_width=0)
+            
+            self.selected_target = (row, col)
+            self.computer_buttons[row][col].configure(fg_color="#e67e22", border_width=2, border_color="white")
+            self.action_btn.configure(state="normal", text="Fire Torpedo 🔥", fg_color="#e74c3c", hover_color="#c0392b")
 
     def pickup_ship(self, char):
         if self.ships_to_place:
@@ -339,7 +431,7 @@ class BattleshipApp(ctk.CTk):
                 self.placement_orientation = "horizontal"
             else:
                 self.placement_orientation = "vertical"
-            self.rotate_btn.configure(text=f"Rotate Ship: {self.placement_orientation.title()}")
+            self.rotate_btn.configure(text=f"Rotate: {self.placement_orientation.title()}")
 
         for r, c in coords:
             self.player_board[r][c] = "~"
@@ -384,20 +476,39 @@ class BattleshipApp(ctk.CTk):
         self.update_setup_ui_state()
 
     def update_setup_ui_state(self):
-        self.random_btn.grid(row=0, column=0, padx=5, pady=5)
-        self.rotate_btn.grid(row=0, column=1, padx=5, pady=5)
         if self.ships_to_place:
-            self.status_label.configure(text=f"Place your {self.ships_to_place[0]} ({self.ship_info[self.ships_to_place[0]]['length']})")
-            self.ready_btn.grid_forget()
+            self.status_label.configure(text=f"Place Your {self.ships_to_place[0]} ({self.ship_info[self.ships_to_place[0]]['length']})")
+            self.action_btn.configure(text="DEPLOY FLEET", state="disabled", fg_color="#95a5a6")
+            self.random_btn.configure(state="normal")
+            self.rotate_btn.configure(state="normal")
         else:
             self.status_label.configure(text="Fleet Positioned. Ready to Deploy?")
-            self.ready_btn.grid(row=1, column=0, columnspan=2, pady=5)
+            self.action_btn.configure(text="DEPLOY FLEET", state="normal", fg_color="#117A65", hover_color="#148F77")
+            self.random_btn.configure(state="disabled")
+            self.rotate_btn.configure(state="disabled")
+
+    def handle_action_click(self):
+        if self.setup_mode:
+            self.finish_setup()
+        elif self.turn == "Your turn" and self.selected_target:
+            self.handle_player_shot(*self.selected_target)
+            self.selected_target = None
+            self.action_btn.configure(state="disabled", text="RELOADING...", fg_color="#95a5a6")
+
+    def update_turn_indicator(self):
+        if self.turn == "Your turn":
+            self.turn_label.configure(text="YOUR TURN")
+        else:
+            self.turn_label.configure(text="")
 
     def finish_setup(self):
         self.setup_mode = False
-        self.setup_buttons_frame.pack_forget()
+        self.random_btn.grid_remove()
+        self.rotate_btn.grid_remove()
+        self.action_btn.configure(text="Select Target", state="disabled", fg_color="#95a5a6")
         self.status_label.configure(text=f"Battle Stations, {self.player_name}! Your Turn.")
         self.turn = "Your turn"
+        self.update_turn_indicator()
 
     def handle_player_shot(self, row, col):
         if self.game_over or self.turn != "Your turn" or self.computer_board[row][col] in ["H", "M"]:
@@ -413,17 +524,18 @@ class BattleshipApp(ctk.CTk):
             
             self.computer_board[row][col] = "H"
             btn.configure(fg_color="#c0392b", state="disabled")
-            self.status_label.configure(text="HIT! Nice shot!")
+            self.status_label.configure(text="Hit! Nice Shot!")
             self.animate_explosion(row, col, self.computer_buttons)
         else:
             self.computer_board[row][col] = "M"
             btn.configure(fg_color="#7f8c8d", state="disabled")
-            self.status_label.configure(text="MISS!")
+            self.status_label.configure(text="Miss!")
         
         self.update_status_ui()
         self.check_win()
         if not self.game_over:
-            self.turn = "Computer"
+            self.turn = "Enemy"
+            self.update_turn_indicator()
             self.after(2000, self.computer_turn)
 
     def animate_explosion(self, row, col, button_grid):
@@ -503,10 +615,10 @@ class BattleshipApp(ctk.CTk):
             self.animate_explosion(row, col, self.player_buttons)
             
             if self.player_health[ship_name] == self.ship_info[ship_name]["length"]:
-                self.status_label.configure(text=f"Computer SUNK your {ship_name}!")
+                self.status_label.configure(text=f"Enemy Sunk Your {ship_name}!")
                 self.computer_target_queue.clear()
             else:
-                self.status_label.configure(text=f"Computer HIT at {chr(ord('A') + row)}{col+1}!")
+                self.status_label.configure(text=f"Enemy Hit At {chr(ord('A') + row)}{col+1}!")
                 neighbors = [(row-1, col), (row+1, col), (row, col-1), (row, col+1)]
                 random.shuffle(neighbors)
                 for nr, nc in neighbors:
@@ -516,18 +628,20 @@ class BattleshipApp(ctk.CTk):
         else:
             self.player_board[row][col] = "M"
             btn.configure(fg_color="#7f8c8d")
-            self.status_label.configure(text=f"Computer Missed at {chr(ord('A') + row)}{col+1}")
+            self.status_label.configure(text=f"Enemy Missed At {chr(ord('A') + row)}{col+1}")
 
         self.update_status_ui()
         self.check_win()
         if not self.game_over:
             self.turn = "Your turn"
+            self.update_turn_indicator()
 
     def check_win(self):
         if self.all_ships_sunk(self.computer_board):
-            self.status_label.configure(text=f"VICTORY! {self.player_name} sank all enemy ships!", text_color="#2ecc71")
+            self.status_label.configure(text=f"Victory! {self.player_name} Sank All Enemy Ships!", text_color="#2ecc71")
             self.game_over = True
             self.reveal_computer_ships()
+            self.action_btn.configure(text="Mission Accomplished", state="disabled", fg_color="#117A65")
         elif self.all_ships_sunk(self.player_board):
             self.status_label.configure(text=f"DEFEAT! {self.player_name}'s fleet was destroyed!", text_color="#e74c3c")
             self.game_over = True
@@ -560,7 +674,8 @@ class BattleshipApp(ctk.CTk):
             "4. Click 'Randomize' for quick deployment.\n"
             "5. Press 'DEPLOY FLEET' to begin combat.\n\n"
             "COMBAT PHASE:\n"
-            "- Click coordinates on 'ENEMY WATERS' to fire.\n"
+            "- Click coordinates on 'ENEMY WATERS' to select.\n"
+            "- Press ENTER, SPACE, or click 'Fire Torpedo' to fire.\n"
             "- Red 'X' = HIT | Grey '•' = MISS\n"
             "- Ships sink when all segments are destroyed.\n"
         )
@@ -580,12 +695,16 @@ class BattleshipApp(ctk.CTk):
         self.game_over = False
         self.setup_mode = True
         self.turn = "Setup"
+        self.update_turn_indicator()
         self.player_title.configure(text=f"{self.player_name.upper()}'S FLEET")
         self.computer_target_queue = []
+        self.selected_target = None
         
         self.ships_to_place = list(self.ship_info.keys())
-        self.setup_buttons_frame.pack(after=self.message_frame, pady=10)
-        self.status_label.configure(text=f"Place your {self.ships_to_place[0]} ({self.ship_info[self.ships_to_place[0]]['length']})", text_color="white")
+        self.random_btn.grid()
+        self.rotate_btn.grid()
+        
+        self.status_label.configure(text=f"Place Your {self.ships_to_place[0]} ({self.ship_info[self.ships_to_place[0]]['length']})", text_color="white")
         self.update_setup_ui_state()
         
         self.place_ships_random(self.computer_board, self.computer_health)
@@ -595,9 +714,9 @@ class BattleshipApp(ctk.CTk):
 
         for r in range(10):
             for c in range(10):
-                self.computer_buttons[r][c].configure(fg_color="#333333", state="normal", text="")
+                self.computer_buttons[r][c].configure(fg_color="#333333", state="normal", text="", border_width=0)
                 
-                self.player_buttons[r][c].configure(fg_color="#333333", state="normal", text="")
+                self.player_buttons[r][c].configure(fg_color="#333333", state="normal", text="", border_width=0)
 
 
 if __name__ == "__main__":
