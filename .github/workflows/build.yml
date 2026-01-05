@@ -26,10 +26,10 @@ jobs:
 
     - name: Build with PyInstaller
       run: |
-        pyinstaller --noconfirm --onefile --windowed --icon "icon.ico" --name "TorpedoTango" --collect-all customtkinter --add-data "icon.ico;." main.py
+        pyinstaller --noconfirm --onedir --windowed --icon "icon.ico" --name "TorpedoTango" --collect-all customtkinter --add-data "icon.ico;." main.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: TorpedoTango-Windows
-        path: dist/TorpedoTango.exe
+        path: dist/TorpedoTango
