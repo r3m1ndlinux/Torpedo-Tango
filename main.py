@@ -10,7 +10,11 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        if getattr(sys, 'frozen', False):
+            # If run as an exe (onedir), resources are in the executable dir
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.abspath(".")
 
     return os.path.join(base_path, relative_path)
 
